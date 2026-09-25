@@ -1,5 +1,7 @@
 defmodule HelloWatch.Clock.Face do
   @moduledoc "Software-rendered round analog face for the watch's RGB888 framebuffer."
+  alias HelloWatch.Clock.Raster
+
   @size 454
   @center 227
   @white {224, 234, 242}
@@ -13,7 +15,10 @@ defmodule HelloWatch.Clock.Face do
   @battery_height 20
   @battery_low 15
 
-  def background do
+  @doc "An encoded frame with just the tick marks, cached once by the caller."
+  def background, do: Raster.patch(Raster.solid(@size, {0, 0, 0}), tick_marks())
+
+  defp tick_marks do
     Enum.reduce(0..59, %{}, fn tick, pixels ->
       major = rem(tick, 5) == 0
 
@@ -27,21 +32,28 @@ defmodule HelloWatch.Clock.Face do
     end)
   end
 
+  # The hands reach at most radius ~178 and the battery indicator sits
+  # around y=330 - neither ever overlaps the tick marks at radius 185-205,
+  # so this overlay always blends against black and only patches the small
+  # region it actually touches, instead of re-encoding all size*size pixels
+  # on every tick.
   def render(time, background \\ background(), battery \\ nil) do
     seconds = time.second
     minutes = time.minute + seconds / 60
     hours = rem(time.hour, 12) + minutes / 60
 
-    background
-    |> battery(battery)
-    |> line(point(hours / 12, -16), point(hours / 12, 112), 6, @white)
-    |> line(point(minutes / 60, -22), point(minutes / 60, 163), 4, @white)
-    |> line(point(seconds / 60, -32), point(seconds / 60, 177), 1.5, @accent)
-    |> line({@center, @center}, {@center, @center}, 7, @accent)
-    |> encode()
+    overlay =
+      %{}
+      |> battery(battery)
+      |> line(point(hours / 12, -16), point(hours / 12, 112), 6, @white)
+      |> line(point(minutes / 60, -22), point(minutes / 60, 163), 4, @white)
+      |> line(point(seconds / 60, -32), point(seconds / 60, 177), 1.5, @accent)
+      |> line({@center, @center}, {@center, @center}, 7, @accent)
+
+    Raster.patch(background, overlay)
   end
 
-  def black, do: :binary.copy(<<0>>, @size * @size * 3)
+  def black, do: Raster.solid(@size, {0, 0, 0})
 
   @doc "Scales an encoded RGB888 frame toward black; fraction 0 is unchanged, 1 is black."
   def fade(frame, fraction) when fraction <= 0, do: frame
@@ -113,14 +125,6 @@ defmodule HelloWatch.Clock.Face do
         else
           acc
         end
-    end
-  end
-
-  defp encode(pixels) do
-    # r8g8b8 in the little-endian simple framebuffer is stored B, G, R.
-    for i <- 0..(@size * @size - 1), into: <<>> do
-      {r, g, b} = Map.get(pixels, i, {0, 0, 0})
-      <<b, g, r>>
     end
   end
 end

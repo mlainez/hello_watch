@@ -1,12 +1,29 @@
 defmodule HelloWatch.Clock.Pages do
   @moduledoc false
-  alias HelloWatch.Clock.Font
+  alias HelloWatch.Clock.{Font, Raster}
 
   @size 454
   @background {5, 12, 18}
   @white {224, 234, 242}
   @muted {105, 130, 145}
   @accent {64, 210, 190}
+
+  # The circular fill never changes, so it is computed once at compile time
+  # rather than rebuilt on every render; only the sparse text/dots overlay
+  # below is computed per frame and patched onto a copy of this.
+  @base_frame (fn ->
+                 center = div(@size, 2)
+                 {r, g, b} = @background
+                 fill = <<b, g, r>>
+                 black = <<0, 0, 0>>
+
+                 for y <- 0..(@size - 1), x <- 0..(@size - 1), into: <<>> do
+                   if (x - center) * (x - center) + (y - center) * (y - center) <=
+                        center * center,
+                      do: fill,
+                      else: black
+                 end
+               end).()
 
   def render(title, lines, page) do
     pixels = text(%{}, 42, 48, title, 3, @accent)
@@ -20,7 +37,7 @@ defmodule HelloWatch.Clock.Pages do
       end)
       |> page_dots(page)
 
-    encode(pixels)
+    Raster.patch(@base_frame, pixels)
   end
 
   defp text(pixels, x, y, value, scale, color) do
@@ -60,22 +77,5 @@ defmodule HelloWatch.Clock.Pages do
             else: map
       end
     end)
-  end
-
-  defp encode(pixels) do
-    center = div(@size, 2)
-
-    for i <- 0..(@size * @size - 1), into: <<>> do
-      x = rem(i, @size)
-      y = div(i, @size)
-
-      default =
-        if (x - center) * (x - center) + (y - center) * (y - center) <= center * center,
-          do: @background,
-          else: {0, 0, 0}
-
-      {r, g, b} = Map.get(pixels, i, default)
-      <<b, g, r>>
-    end
   end
 end
