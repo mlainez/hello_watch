@@ -19,6 +19,13 @@ defmodule HelloWatch.ClockTest do
     assert Face.black() == :binary.copy(<<0>>, byte_size(morning))
   end
 
+  test "fades a frame toward black by a fraction" do
+    frame = :binary.copy(<<200>>, 12)
+    assert Face.fade(frame, 0) == frame
+    assert Face.fade(frame, 1) == :binary.copy(<<0>>, 12)
+    assert Face.fade(frame, 0.5) == :binary.copy(<<100>>, 12)
+  end
+
   test "decodes split and batched evdev events without treating repeats as presses" do
     event = fn value -> <<0::128, 1::little-16, 114::little-16, value::little-signed-32>> end
     <<first::binary-size(11), rest::binary>> = event.(1)
@@ -61,24 +68,59 @@ defmodule HelloWatch.ClockTest do
     refute frame == Face.black()
   end
 
-  test "button blanks the frame, pauses rendering, and wakes with a fresh clock" do
+  defp drain_frames(last, gap) do
+    receive do
+      {:frame, frame} -> drain_frames(frame, gap)
+    after
+      gap -> last
+    end
+  end
+
+  test "button fades the frame to black, pauses rendering, and wakes with a fresh clock" do
     Application.put_env(:hello_watch, :display_test_owner, self())
     on_exit(fn -> Application.delete_env(:hello_watch, :display_test_owner) end)
     pid = start_supervised!({Clock, display: FakeDisplay})
     assert_receive {:frame, initial}, 2000
     refute initial == Face.black()
     Clock.toggle()
-    assert_receive {:frame, black}
-    assert black == Face.black()
-    assert %{on: false} = Clock.status()
-    # Contact bounce does not wake it again.
+    # Contact bounce right after the real press does not cancel the fade.
     Clock.toggle()
+    black = drain_frames(initial, 300)
+    assert black == Face.black()
     assert %{on: false} = Clock.status()
     send(pid, :tick)
     refute_receive {:frame, _}, 300
     Clock.toggle()
-    assert_receive {:frame, awake}, 2000
+    awake = drain_frames(black, 300)
     refute awake == black
     assert %{on: true} = Clock.status()
+  end
+
+  test "touch wakes a blanked screen and resets the idle timer while it is on" do
+    Application.put_env(:hello_watch, :display_test_owner, self())
+    on_exit(fn -> Application.delete_env(:hello_watch, :display_test_owner) end)
+    pid = start_supervised!({Clock, display: FakeDisplay})
+    assert_receive {:frame, initial}, 2000
+
+    Clock.toggle()
+    black = drain_frames(initial, 300)
+    assert black == Face.black()
+
+    send(pid, :touch)
+    awake = drain_frames(black, 300)
+    refute awake == black
+    assert %{on: true} = Clock.status()
+  end
+
+  test "goes dark on its own after being idle" do
+    Application.put_env(:hello_watch, :display_test_owner, self())
+    on_exit(fn -> Application.delete_env(:hello_watch, :display_test_owner) end)
+    pid = start_supervised!({Clock, display: FakeDisplay})
+    assert_receive {:frame, initial}, 2000
+
+    send(pid, :screen_timeout)
+    black = drain_frames(initial, 300)
+    assert black == Face.black()
+    assert %{on: false} = Clock.status()
   end
 end

@@ -49,9 +49,13 @@ setup and the `fastboot flash userdata` command.
 ## Clock and bottom button
 
 The firmware starts an antialiased analog clock on the 454×454 AMOLED display.
-The bottom button toggles the face off/on. Holding it does not repeatedly toggle;
-presses within 250 ms are ignored as contact bounce. Waking redraws the current
-time immediately. Rendering pauses while the screen is black.
+The bottom button toggles the face off/on; touching the screen while it is off
+also wakes it. Holding the button does not repeatedly toggle; presses within
+250 ms are ignored as contact bounce. Both directions fade over one second
+rather than cutting instantly. Rendering pauses while the screen is off.
+
+With no touch, swipe or button activity for 2 minutes, the screen fades off on
+its own. Any activity resets that countdown.
 
 Time uses the system clock, which NervesTime synchronizes over the network as UTC.
 The face shows local time for the zone named in `config/target.exs`:
@@ -83,8 +87,11 @@ button is Linux `KEY_VOLUMEDOWN` (114). The evdev reader uses the target's
 
 Screen off currently means **all-black AMOLED pixels**, not panel power-off or
 system suspend. The current kernel has no native panel driver or brightness
-control. The watch stays running and can be woken with the button or reached via
-SSH. True panel power management requires work in the system/kernel repository.
+control. The watch stays running and can be woken with the button, a touch, or
+reached via SSH. True panel power management (a real MIPI DCS sleep/display-off
+command, or a separate backlight/WLED IC if this board has one) requires work
+in the system/kernel repository; a black frame is the lowest-power state
+reachable from userspace alone in the meantime.
 
 The renderer has no additional dependencies. Scenic's current framebuffer driver
 requires Cairo in the Nerves system; this system does not include it. See the

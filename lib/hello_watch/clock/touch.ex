@@ -67,6 +67,7 @@ defmodule HelloWatch.Clock.Touch do
   def handle_info({port, {:data, data}}, %{port: port} = state) do
     {events, buffer} = decode(state.buffer <> data)
     {gestures, gesture_state} = gesture(events, Map.take(state, [:x, :y, :start, :down]))
+    if gesture_state.down and not state.down, do: send(state.target, :touch)
     Enum.each(gestures, &send(state.target, {:swipe, &1}))
     {:noreply, state |> Map.merge(gesture_state) |> Map.put(:buffer, buffer)}
   end

@@ -13,6 +13,14 @@ defmodule HelloWatch.Clock do
   @idle_stream [:battery]
   @sensor_stream [:battery, :heart, {:accel, 25}, {:gyro, 25}]
 
+  # This kernel has no panel/backlight driver (see README), so there is no
+  # brightness to lower - "dimming" means fading the rendered frame toward
+  # true black. On this self-emissive AMOLED that is a real, near-zero-power
+  # state per pixel, unlike an LCD backlight.
+  @idle_timeout :timer.minutes(2)
+  @fade_steps 10
+  @fade_interval_ms div(:timer.seconds(1), @fade_steps)
+
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   def toggle, do: send(__MODULE__, :toggle_display)
   def status, do: GenServer.call(__MODULE__, :status)
@@ -34,11 +42,15 @@ defmodule HelloWatch.Clock do
         battery: nil,
         sensors: %{},
         sensor_errors: %{},
-        render_timer: nil
+        render_timer: nil,
+        idle_timer: nil,
+        fading: nil,
+        fade_gen: 0,
+        fade_frame: nil
       }
 
       send(self(), :tick)
-      {:ok, stream(state, @idle_stream)}
+      {:ok, state |> stream(@idle_stream) |> start_idle_timer()}
     else
       error -> {:stop, error}
     end
@@ -57,14 +69,14 @@ defmodule HelloWatch.Clock do
 
   @impl true
   def handle_info(:tick, state) do
-    if state.on, do: draw(state)
+    if state.on and is_nil(state.fading), do: draw(state)
     Process.send_after(self(), :tick, 1000 - rem(System.system_time(:millisecond), 1000))
     {:noreply, state}
   end
 
   def handle_info(:refresh, state) do
     state = %{state | render_timer: nil}
-    if state.on, do: draw(state)
+    if state.on and is_nil(state.fading), do: draw(state)
     {:noreply, state}
   end
 
@@ -74,25 +86,58 @@ defmodule HelloWatch.Clock do
     if state.last_press == nil or now - state.last_press >= 250 do
       state =
         if state.on do
-          state |> leave_page(state.page) |> Map.merge(%{on: false, last_press: now})
+          start_fade_out(%{state | last_press: now})
         else
-          state |> Map.merge(%{on: true, last_press: now}) |> enter_page(state.page)
+          wake(%{state | last_press: now})
         end
 
-      if state.on, do: draw(state), else: :ok = state.display.draw(state.fd, Face.black())
       {:noreply, state}
     else
       {:noreply, state}
     end
   end
 
+  def handle_info(:touch, %{on: true, fading: nil} = state),
+    do: {:noreply, start_idle_timer(state)}
+
+  def handle_info(:touch, state), do: {:noreply, wake(state)}
+
+  def handle_info(:screen_timeout, %{on: true, fading: nil} = state),
+    do: {:noreply, start_fade_out(state)}
+
+  def handle_info(:screen_timeout, state), do: {:noreply, state}
+
+  def handle_info({:fade_step, gen, step}, %{fade_gen: gen} = state) do
+    fraction = if state.fading == :out, do: step / @fade_steps, else: 1 - step / @fade_steps
+    :ok = state.display.draw(state.fd, Face.fade(state.fade_frame, fraction))
+
+    if step >= @fade_steps do
+      {:noreply, finish_fade(state)}
+    else
+      Process.send_after(self(), {:fade_step, gen, step + 1}, @fade_interval_ms)
+      {:noreply, state}
+    end
+  end
+
+  # A stale step from a fade that got interrupted (new activity bumped
+  # fade_gen) - the interrupting handler already drew the right frame.
+  def handle_info({:fade_step, _stale_gen, _step}, state), do: {:noreply, state}
+
   def handle_info({:swipe, _direction}, %{on: false} = state), do: {:noreply, state}
 
   def handle_info({:swipe, direction}, state) when direction in [:left, :right] do
     step = if direction == :left, do: 1, else: -1
     next = Integer.mod(state.page + step, length(@pages))
-    state = state |> leave_page(state.page) |> Map.put(:page, next) |> enter_page(next)
-    if state.on, do: draw(state)
+
+    state =
+      state
+      |> Map.merge(%{fading: nil, fade_gen: state.fade_gen + 1})
+      |> leave_page(state.page)
+      |> Map.put(:page, next)
+      |> enter_page(next)
+      |> start_idle_timer()
+
+    draw(state)
     {:noreply, state}
   end
 
@@ -107,6 +152,40 @@ defmodule HelloWatch.Clock do
   def terminate(_, state) do
     close_sensors(state.sensor_port)
     state.display.close(state.fd)
+  end
+
+  defp start_fade_out(state) do
+    gen = state.fade_gen + 1
+    frame = render_frame(state)
+    Process.send_after(self(), {:fade_step, gen, 1}, @fade_interval_ms)
+    %{state | fading: :out, fade_gen: gen, fade_frame: frame}
+  end
+
+  defp wake(state) do
+    gen = state.fade_gen + 1
+
+    state =
+      state
+      |> Map.merge(%{on: true, fading: :in, fade_gen: gen})
+      |> enter_page(state.page)
+      |> start_idle_timer()
+
+    frame = render_frame(state)
+    :ok = state.display.draw(state.fd, Face.fade(frame, 1.0))
+    Process.send_after(self(), {:fade_step, gen, 1}, @fade_interval_ms)
+    %{state | fade_frame: frame}
+  end
+
+  defp finish_fade(%{fading: :out} = state) do
+    if state.idle_timer, do: Process.cancel_timer(state.idle_timer)
+    state |> leave_page(state.page) |> Map.merge(%{on: false, fading: nil, idle_timer: nil})
+  end
+
+  defp finish_fade(%{fading: :in} = state), do: %{state | fading: nil}
+
+  defp start_idle_timer(state) do
+    if state.idle_timer, do: Process.cancel_timer(state.idle_timer)
+    %{state | idle_timer: Process.send_after(self(), :screen_timeout, @idle_timeout)}
   end
 
   defp enter_page(state, 2), do: stream(state, @sensor_stream)
@@ -166,19 +245,13 @@ defmodule HelloWatch.Clock do
 
   defp queue_render(state), do: state
 
-  defp draw(%{page: 0} = state) do
-    :ok =
-      state.display.draw(
-        state.fd,
-        Face.render(local_time(state), state.background, state.battery)
-      )
-  end
+  defp draw(state), do: :ok = state.display.draw(state.fd, render_frame(state))
 
-  defp draw(%{page: 1} = state),
-    do: state.display.draw(state.fd, Pages.render("NETWORK", network_lines(), 1))
+  defp render_frame(%{page: 0} = state),
+    do: Face.render(local_time(state), state.background, state.battery)
 
-  defp draw(%{page: 2} = state),
-    do: state.display.draw(state.fd, Pages.render("SENSORS", sensor_lines(state), 2))
+  defp render_frame(%{page: 1}), do: Pages.render("NETWORK", network_lines(), 1)
+  defp render_frame(%{page: 2} = state), do: Pages.render("SENSORS", sensor_lines(state), 2)
 
   defp local_time(state) do
     now = DateTime.utc_now()
@@ -270,6 +343,7 @@ defmodule HelloWatch.Clock do
   # Debug function to inspect state
   def debug_state do
     state = GenServer.call(__MODULE__, :get_full_state)
+
     %{
       page: state.page,
       sensors: state.sensors,

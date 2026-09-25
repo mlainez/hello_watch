@@ -43,6 +43,15 @@ defmodule HelloWatch.Clock.Face do
 
   def black, do: :binary.copy(<<0>>, @size * @size * 3)
 
+  @doc "Scales an encoded RGB888 frame toward black; fraction 0 is unchanged, 1 is black."
+  def fade(frame, fraction) when fraction <= 0, do: frame
+  def fade(frame, fraction) when fraction >= 1, do: :binary.copy(<<0>>, byte_size(frame))
+
+  def fade(frame, fraction) do
+    scale = 1 - fraction
+    for <<byte <- frame>>, into: <<>>, do: <<round(byte * scale)>>
+  end
+
   defp battery(pixels, nil), do: pixels
 
   defp battery(pixels, percent) when is_number(percent) do
