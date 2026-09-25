@@ -26,6 +26,24 @@ defmodule HelloWatch.ClockTest do
     assert Face.fade(frame, 0.5) == :binary.copy(<<100>>, 12)
   end
 
+  defp pixel(frame, x, y) do
+    <<b, g, r>> = binary_part(frame, (y * 454 + x) * 3, 3)
+    {r, g, b}
+  end
+
+  test "bakes a small accent-colored N logo above centre into the background" do
+    frame = Face.background()
+    assert pixel(frame, 217, 130) == {64, 210, 190}
+    assert pixel(frame, 227, 80) == {0, 0, 0}
+  end
+
+  test "hands render cleanly at every position, including where they cross the logo" do
+    for h <- 0..23, m <- [0, 15, 30, 45] do
+      frame = Face.render(Time.new!(h, m, 0))
+      assert byte_size(frame) == 454 * 454 * 3
+    end
+  end
+
   test "decodes split and batched evdev events without treating repeats as presses" do
     event = fn value -> <<0::128, 1::little-16, 114::little-16, value::little-signed-32>> end
     <<first::binary-size(11), rest::binary>> = event.(1)

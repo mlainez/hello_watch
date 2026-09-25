@@ -15,8 +15,16 @@ defmodule HelloWatch.Clock.Face do
   @battery_height 20
   @battery_low 15
 
-  @doc "An encoded frame with just the tick marks, cached once by the caller."
-  def background, do: Raster.patch(Raster.solid(@size, {0, 0, 0}), tick_marks())
+  # Small "N" mark above centre, same idea as the charge indicator: it sits
+  # in the hands' sweep and is drawn once into the cached background rather
+  # than every tick.
+  @logo_top 118
+  @logo_bottom 142
+  @logo_left 217
+  @logo_right 237
+
+  @doc "An encoded frame with the tick marks and logo, cached once by the caller."
+  def background, do: Raster.patch(Raster.solid(@size, {0, 0, 0}), tick_marks() |> nerves_mark())
 
   defp tick_marks do
     Enum.reduce(0..59, %{}, fn tick, pixels ->
@@ -32,11 +40,18 @@ defmodule HelloWatch.Clock.Face do
     end)
   end
 
-  # The hands reach at most radius ~178 and the battery indicator sits
-  # around y=330 - neither ever overlaps the tick marks at radius 185-205,
-  # so this overlay always blends against black and only patches the small
-  # region it actually touches, instead of re-encoding all size*size pixels
-  # on every tick.
+  defp nerves_mark(pixels) do
+    pixels
+    |> line({@logo_left, @logo_top}, {@logo_left, @logo_bottom}, 1.5, @accent)
+    |> line({@logo_right, @logo_top}, {@logo_right, @logo_bottom}, 1.5, @accent)
+    |> line({@logo_left, @logo_top}, {@logo_right, @logo_bottom}, 1.5, @accent)
+  end
+
+  # The hands and battery indicator sweep across the whole face, including
+  # over the tick marks and logo baked into `background`, so every stroke
+  # below blends against that frame's real pixels rather than assuming
+  # black - only the small region each stroke actually touches is looked
+  # up, so this stays cheap despite not re-encoding all size*size pixels.
   def render(time, background \\ background(), battery \\ nil) do
     seconds = time.second
     minutes = time.minute + seconds / 60
@@ -44,11 +59,11 @@ defmodule HelloWatch.Clock.Face do
 
     overlay =
       %{}
-      |> battery(battery)
-      |> line(point(hours / 12, -16), point(hours / 12, 112), 6, @white)
-      |> line(point(minutes / 60, -22), point(minutes / 60, 163), 4, @white)
-      |> line(point(seconds / 60, -32), point(seconds / 60, 177), 1.5, @accent)
-      |> line({@center, @center}, {@center, @center}, 7, @accent)
+      |> battery(battery, background)
+      |> line(point(hours / 12, -16), point(hours / 12, 112), 6, @white, background)
+      |> line(point(minutes / 60, -22), point(minutes / 60, 163), 4, @white, background)
+      |> line(point(seconds / 60, -32), point(seconds / 60, 177), 1.5, @accent, background)
+      |> line({@center, @center}, {@center, @center}, 7, @accent, background)
 
     Raster.patch(background, overlay)
   end
@@ -64,9 +79,9 @@ defmodule HelloWatch.Clock.Face do
     for <<byte <- frame>>, into: <<>>, do: <<round(byte * scale)>>
   end
 
-  defp battery(pixels, nil), do: pixels
+  defp battery(pixels, nil, _background), do: pixels
 
-  defp battery(pixels, percent) when is_number(percent) do
+  defp battery(pixels, percent, background) when is_number(percent) do
     level = percent |> max(0) |> min(100)
     left = @center - @battery_width / 2
     right = @center + @battery_width / 2
@@ -74,15 +89,15 @@ defmodule HelloWatch.Clock.Face do
     bottom = @battery_y + @battery_height / 2
 
     pixels
-    |> line({left, top}, {right, top}, 1, @white)
-    |> line({left, bottom}, {right, bottom}, 1, @white)
-    |> line({left, top}, {left, bottom}, 1, @white)
-    |> line({right, top}, {right, bottom}, 1, @white)
-    |> line({right + 3, @battery_y - 4}, {right + 3, @battery_y + 4}, 2, @white)
-    |> charge(left, right, level)
+    |> line({left, top}, {right, top}, 1, @white, background)
+    |> line({left, bottom}, {right, bottom}, 1, @white, background)
+    |> line({left, top}, {left, bottom}, 1, @white, background)
+    |> line({right, top}, {right, bottom}, 1, @white, background)
+    |> line({right + 3, @battery_y - 4}, {right + 3, @battery_y + 4}, 2, @white, background)
+    |> charge(left, right, level, background)
   end
 
-  defp charge(pixels, left, right, level) do
+  defp charge(pixels, left, right, level, background) do
     span = right - left - 8
     width = span * level / 100
 
@@ -94,7 +109,8 @@ defmodule HelloWatch.Clock.Face do
         {left + 4, @battery_y},
         {left + 4 + width, @battery_y},
         5,
-        if(level <= @battery_low, do: @low, else: @accent)
+        if(level <= @battery_low, do: @low, else: @accent),
+        background
       )
     end
   end
@@ -104,7 +120,7 @@ defmodule HelloWatch.Clock.Face do
     {@center + :math.sin(angle) * radius, @center - :math.cos(angle) * radius}
   end
 
-  defp line(pixels, {ax, ay}, {bx, by}, radius, color) do
+  defp line(pixels, {ax, ay}, {bx, by}, radius, color, background \\ nil) do
     dx = bx - ax
     dy = by - ay
     length_squared = max(dx * dx + dy * dy, 0.0001)
@@ -118,13 +134,21 @@ defmodule HelloWatch.Clock.Face do
         coverage = min(1, max(0, radius + 0.5 - distance))
 
         if coverage > 0 do
+          index = y * @size + x
           {r, g, b} = color
-          {br, bg, bb} = Map.get(acc, y * @size + x, {0, 0, 0})
+          {br, bg, bb} = Map.get_lazy(acc, index, fn -> underlying(background, index) end)
           blend = fn c, base -> round(c * coverage + base * (1 - coverage)) end
-          Map.put(acc, y * @size + x, {blend.(r, br), blend.(g, bg), blend.(b, bb)})
+          Map.put(acc, index, {blend.(r, br), blend.(g, bg), blend.(b, bb)})
         else
           acc
         end
     end
+  end
+
+  defp underlying(nil, _index), do: {0, 0, 0}
+
+  defp underlying(background, index) do
+    <<b, g, r>> = binary_part(background, index * 3, 3)
+    {r, g, b}
   end
 end
