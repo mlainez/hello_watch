@@ -26,6 +26,9 @@ config :nerves_runtime, startup_guard_enabled: true
 # Advance the system clock on devices without a real-time clock.
 config :nerves, :erlinit, update_clock: true
 
+# Restore the clock at boot from the PMIC RTC plus an offset saved after NTP sync.
+config :nerves_time, rtc: HelloWatch.PmicRtc
+
 # Configure the device for SSH IEx prompt access and firmware updates
 #
 # * See https://hexdocs.pm/nerves_ssh/readme.html for general SSH configuration
