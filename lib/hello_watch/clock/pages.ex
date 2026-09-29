@@ -8,6 +8,13 @@ defmodule HelloWatch.Clock.Pages do
   @muted {105, 130, 145}
   @accent {64, 210, 190}
 
+  # The panel is round: at the title's row the visible span is only about
+  # x 87..366, and the body rows reach the edge near x 49, so the title is
+  # centred and the body is inset past the curve.
+  @title_y 48
+  @title_scale 3
+  @body_x 60
+
   # The circular fill never changes, so it is computed once at compile time
   # rather than rebuilt on every render; only the sparse text/dots overlay
   # below is computed per frame and patched onto a copy of this.
@@ -26,18 +33,24 @@ defmodule HelloWatch.Clock.Pages do
                end).()
 
   def render(title, lines, page) do
-    pixels = text(%{}, 42, 48, title, 3, @accent)
+    pixels = text(%{}, centered_x(title, @title_scale), @title_y, title, @title_scale, @accent)
 
     pixels =
       lines
       |> Enum.take(15)
       |> Enum.with_index()
       |> Enum.reduce(pixels, fn {line, index}, acc ->
-        text(acc, 42, 94 + index * 20, String.slice(to_string(line), 0, 30), 2, @white)
+        text(acc, @body_x, 94 + index * 20, String.slice(to_string(line), 0, 28), 2, @white)
       end)
       |> page_dots(page)
 
     Raster.patch(@base_frame, pixels)
+  end
+
+  # Glyphs are 5 columns wide on a 6-column advance.
+  defp centered_x(value, scale) do
+    width = String.length(to_string(value)) * 6 * scale - scale
+    div(@size - width, 2)
   end
 
   defp text(pixels, x, y, value, scale, color) do
