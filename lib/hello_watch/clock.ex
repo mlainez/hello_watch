@@ -9,7 +9,7 @@ defmodule HelloWatch.Clock do
 
   # The hub delivers every event to a single reader, so one stream serves the
   # whole app: charge alone while the face is up, plus the rest on the sensor
-  # page. See HelloWatch.Sensors.open/1.
+  # page, and nothing while the screen is off. See HelloWatch.Sensors.open/1.
   @idle_stream [:battery]
   @sensor_stream [:battery, :heart, {:accel, 25}, {:gyro, 25}]
 
@@ -43,14 +43,14 @@ defmodule HelloWatch.Clock do
         sensors: %{},
         sensor_errors: %{},
         render_timer: nil,
+        tick_ref: nil,
         idle_timer: nil,
         fading: nil,
         fade_gen: 0,
         fade_frame: nil
       }
 
-      send(self(), :tick)
-      {:ok, state |> stream(@idle_stream) |> start_idle_timer()}
+      {:ok, state |> schedule_tick(0) |> stream(@idle_stream) |> start_idle_timer()}
     else
       error -> {:stop, error}
     end
@@ -68,11 +68,15 @@ defmodule HelloWatch.Clock do
   end
 
   @impl true
-  def handle_info(:tick, state) do
-    if state.on and is_nil(state.fading), do: draw(state)
-    Process.send_after(self(), :tick, 1000 - rem(System.system_time(:millisecond), 1000))
-    {:noreply, state}
+  # The tick stops once the screen is off, so a dark watch never wakes the
+  # BEAM just to skip a frame; wake/1 restarts it.
+  def handle_info({:tick, ref}, %{tick_ref: ref, on: true} = state) do
+    if is_nil(state.fading), do: draw(state)
+    {:noreply, schedule_tick(state)}
   end
+
+  def handle_info({:tick, ref}, %{tick_ref: ref} = state),
+    do: {:noreply, %{state | tick_ref: nil}}
 
   def handle_info(:refresh, state) do
     state = %{state | render_timer: nil}
@@ -169,6 +173,7 @@ defmodule HelloWatch.Clock do
       |> Map.merge(%{on: true, fading: :in, fade_gen: gen})
       |> enter_page(state.page)
       |> start_idle_timer()
+      |> ensure_ticking()
 
     frame = render_frame(state)
     :ok = state.display.draw(state.fd, Face.fade(frame, 1.0))
@@ -178,10 +183,20 @@ defmodule HelloWatch.Clock do
 
   defp finish_fade(%{fading: :out} = state) do
     if state.idle_timer, do: Process.cancel_timer(state.idle_timer)
-    state |> leave_page(state.page) |> Map.merge(%{on: false, fading: nil, idle_timer: nil})
+    close_sensors(state.sensor_port)
+    %{state | on: false, fading: nil, idle_timer: nil, sensor_port: nil, sensors: %{}}
   end
 
   defp finish_fade(%{fading: :in} = state), do: %{state | fading: nil}
+
+  defp schedule_tick(state, delay \\ 1000 - rem(System.system_time(:millisecond), 1000)) do
+    ref = make_ref()
+    Process.send_after(self(), {:tick, ref}, delay)
+    %{state | tick_ref: ref}
+  end
+
+  defp ensure_ticking(%{tick_ref: nil} = state), do: schedule_tick(state)
+  defp ensure_ticking(state), do: state
 
   defp start_idle_timer(state) do
     if state.idle_timer, do: Process.cancel_timer(state.idle_timer)
@@ -189,6 +204,7 @@ defmodule HelloWatch.Clock do
   end
 
   defp enter_page(state, 2), do: stream(state, @sensor_stream)
+  defp enter_page(%{sensor_port: nil} = state, _), do: stream(state, @idle_stream)
   defp enter_page(state, _), do: state
 
   # Drop the last readings on the way out: they would otherwise sit on the page

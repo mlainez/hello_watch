@@ -90,9 +90,6 @@ config :vintage_net,
        # Keep the address stable across brcmfmac probes and tell
        # wpa_supplicant not to randomize it while scanning.
        mac_address: {HelloWatch.WiFi, :stable_mac, []},
-       # Run wpa_supplicant with -dd and capture its output in RingLogger so
-       # a Wi-Fi failure can be diagnosed later from the USB IEx console.
-       verbose: true,
        vintage_net_wifi: %{networks: wifi_networks},
        ipv4: %{method: :dhcp}
      }}

@@ -106,8 +106,8 @@ defmodule HelloWatch.ClockTest do
     black = drain_frames(initial, 300)
     assert black == Face.black()
     assert %{on: false} = Clock.status()
-    send(pid, :tick)
-    refute_receive {:frame, _}, 300
+    refute_receive {:frame, _}, 1100
+    assert %{tick_ref: nil} = :sys.get_state(pid)
     Clock.toggle()
     awake = drain_frames(black, 300)
     refute awake == black
