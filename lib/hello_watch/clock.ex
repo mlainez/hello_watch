@@ -66,6 +66,8 @@ defmodule HelloWatch.Clock do
      }, state}
   end
 
+  def handle_call(:get_full_state, _from, state), do: {:reply, state, state}
+
   @impl true
   # The tick stops once the screen is off, so a dark watch never wakes the
   # BEAM just to skip a frame; wake/1 restarts it.
@@ -367,9 +369,5 @@ defmodule HelloWatch.Clock do
       sensor_port: state.sensor_port,
       sensor_errors: state.sensor_errors
     }
-  end
-
-  def handle_call(:get_full_state, _from, state) do
-    {:reply, state, state}
   end
 end
