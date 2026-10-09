@@ -6,6 +6,21 @@ fetched as a git dependency; `mix deps.get` pulls a prebuilt system artifact
 from that repository's GitHub releases, so no local Buildroot checkout or
 compile is needed to build firmware.
 
+## Try it without building
+
+A prebuilt image of this app is attached to each GitHub release. The
+system repository's `flash.sh` downloads and flashes the latest one:
+
+```sh
+git clone https://github.com/mlainez/nerves_system_tickwatch_pro3.git
+nerves_system_tickwatch_pro3/flash.sh --unlock
+```
+
+See the [system's Quickstart](https://github.com/mlainez/nerves_system_tickwatch_pro3#quickstart)
+for entering fastboot mode. The prebuilt image is built with
+`HELLO_WATCH_PUBLIC_IMAGE=1`, so it carries no Wi-Fi network and no SSH key;
+build it yourself (below) to get networking, SSH and `mix upload`.
+
 ## Targets
 
 Nerves applications produce images for hardware targets based on the
@@ -23,6 +38,10 @@ https://hexdocs.pm/nerves/supported-targets.html
 Copy `config/target.secret.exs.example` to `config/target.secret.exs` and fill
 in your own Wi-Fi network — it's gitignored, so it's not shared by cloning
 this repo. Without it, wlan0 has no configured network.
+
+The public keys in `~/.ssh` (`id_rsa.pub`, `id_ecdsa.pub`, `id_ed25519.pub`)
+are authorized for SSH, which also carries `mix upload`. USB networking
+(`usb0`) works without Wi-Fi.
 
 To build a fastboot-compatible image:
 

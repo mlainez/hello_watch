@@ -34,12 +34,20 @@ config :nerves_time, rtc: HelloWatch.PmicRtc
 # * See https://hexdocs.pm/nerves_ssh/readme.html for general SSH configuration
 # * See https://hexdocs.pm/ssh_subsystem_fwup/readme.html for firmware updates
 
-keys =
-  System.user_home!()
-  |> Path.join(".ssh/id_{rsa,ecdsa,ed25519}.pub")
-  |> Path.wildcard()
+# HELLO_WATCH_PUBLIC_IMAGE=1 builds the image published on GitHub releases:
+# no SSH keys and no Wi-Fi credentials from the build machine end up in it.
+public_image? = System.get_env("HELLO_WATCH_PUBLIC_IMAGE") in ["1", "true"]
 
-if keys == [],
+keys =
+  if public_image? do
+    []
+  else
+    System.user_home!()
+    |> Path.join(".ssh/id_{rsa,ecdsa,ed25519}.pub")
+    |> Path.wildcard()
+  end
+
+if keys == [] and not public_image?,
   do:
     Mix.raise("""
     No SSH public keys found in ~/.ssh. An ssh authorized key is needed to
@@ -65,17 +73,22 @@ config :nerves_ssh,
 wifi_secrets_path = Path.join(__DIR__, "target.secret.exs")
 
 wifi_networks =
-  if File.exists?(wifi_secrets_path) do
-    {networks, _bindings} = Code.eval_file(wifi_secrets_path)
-    networks
-  else
-    IO.warn(
-      "#{wifi_secrets_path} not found; wlan0 will have no configured network. " <>
-        "Copy config/target.secret.exs.example to config/target.secret.exs " <>
-        "and add your own Wi-Fi credentials."
-    )
+  cond do
+    public_image? ->
+      []
 
-    []
+    File.exists?(wifi_secrets_path) ->
+      {networks, _bindings} = Code.eval_file(wifi_secrets_path)
+      networks
+
+    true ->
+      IO.warn(
+        "#{wifi_secrets_path} not found; wlan0 will have no configured network. " <>
+          "Copy config/target.secret.exs.example to config/target.secret.exs " <>
+          "and add your own Wi-Fi credentials."
+      )
+
+      []
   end
 
 config :vintage_net,
