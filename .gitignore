@@ -22,3 +22,6 @@ erl_crash.dump
 # Editor / tooling state
 /.claude/
 /.omo/
+
+# Raw firmware image from mix firmware.image
+/hello_watch.img
