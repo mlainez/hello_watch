@@ -33,9 +33,21 @@ mix firmware
 mix firmware.image
 ```
 
-The raw image is written to `hello_watch.img` in the project root.
-See the system repository's README for the one-time `lk2nd.img` and `dtbo.img`
-setup and the `fastboot flash userdata` command.
+The raw image is written to `hello_watch.img` in the project root. To flash
+it, put the watch in fastboot mode (power off, then hold the top button while
+plugging in USB) and run the system's flashing script:
+
+```sh
+# First install: unlocks the bootloader (wipes the watch), then flashes
+# dtbo, lk2nd and the firmware.
+deps/nerves_system_tickwatch_pro3/flash.sh --unlock hello_watch.img
+
+# Later reinstalls over USB, keeping lk2nd:
+deps/nerves_system_tickwatch_pro3/flash.sh --app-only hello_watch.img
+```
+
+Once it is running, `mix upload` updates the firmware over the network. See
+the system repository's README for details on the boot chain.
 
 ## Learn more
 
