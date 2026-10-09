@@ -47,8 +47,11 @@ if keys == [],
     See your project's config.exs for this error message.
     """)
 
+# /data is a plain directory on the read-only rootfs (the GPS stack bind-mounts
+# over it), so the host key lives on the writable application partition.
 config :nerves_ssh,
-  authorized_keys: Enum.map(keys, &File.read!/1)
+  authorized_keys: Enum.map(keys, &File.read!/1),
+  system_dir: "/root/nerves_ssh"
 
 # Configure the network using vintage_net
 #
