@@ -55,7 +55,7 @@ defmodule HelloWatch.MixProject do
       # changes to your application are needed.
       {:nerves_system_tickwatch_pro3,
        github: "mlainez/nerves_system_tickwatch_pro3",
-       tag: "v0.1.0",
+       tag: "v0.2.0",
        runtime: false,
        targets: :ticwatch_pro3}
     ]
