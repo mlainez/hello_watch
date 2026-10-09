@@ -1,12 +1,19 @@
 defmodule HelloWatch.ClockTest do
   use ExUnit.Case
   alias HelloWatch.Clock
-  alias HelloWatch.Clock.{Button, Face, Pages, Touch}
+  alias HelloWatch.Clock.{Button, Display, Face, Pages, Touch}
 
   defmodule FakeDisplay do
     def open, do: {:ok, Application.fetch_env!(:hello_watch, :display_test_owner)}
-    def draw(owner, frame), do: send(owner, {:frame, frame}) && :ok
+    def draw(owner, frame), do: notify(owner, {:frame, frame})
+    def blank(owner), do: notify(owner, :blank)
+    def unblank(owner), do: notify(owner, :unblank)
     def close(_), do: :ok
+
+    defp notify(owner, message) do
+      send(owner, message)
+      :ok
+    end
   end
 
   test "renders a round RGB888 clock with black corners and moving hands" do
@@ -86,6 +93,21 @@ defmodule HelloWatch.ClockTest do
     refute frame == Face.black()
   end
 
+  test "encodes BGR888 frames for padded 24 and 32 bpp framebuffers" do
+    frame = :binary.copy(<<1, 2, 3>>, 454 * 454)
+    assert Display.encode(frame, 24, 1362) == frame
+
+    padded = IO.iodata_to_binary(Display.encode(frame, 24, 1440))
+    assert byte_size(padded) == 1440 * 454
+    assert binary_part(padded, 1362, 78) == :binary.copy(<<0>>, 78)
+    assert binary_part(padded, 1440, 3) == <<1, 2, 3>>
+
+    xrgb = IO.iodata_to_binary(Display.encode(frame, 32, 1920))
+    assert byte_size(xrgb) == 1920 * 454
+    assert binary_part(xrgb, 0, 8) == <<1, 2, 3, 0, 1, 2, 3, 0>>
+    assert binary_part(xrgb, 1920, 4) == <<1, 2, 3, 0>>
+  end
+
   defp drain_frames(last, gap) do
     receive do
       {:frame, frame} -> drain_frames(frame, gap)
@@ -106,9 +128,11 @@ defmodule HelloWatch.ClockTest do
     black = drain_frames(initial, 300)
     assert black == Face.black()
     assert %{on: false} = Clock.status()
+    assert_received :blank
     refute_receive {:frame, _}, 1100
     assert %{tick_ref: nil} = :sys.get_state(pid)
     Clock.toggle()
+    assert_receive :unblank
     awake = drain_frames(black, 300)
     refute awake == black
     assert %{on: true} = Clock.status()

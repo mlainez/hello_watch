@@ -79,19 +79,20 @@ From SSH/IEx, `HelloWatch.Clock.toggle()` toggles the screen and
 
 ### Display support
 
-This system exposes a SimpleDRM framebuffer, RGB888, 454×454 with a 1362-byte
-stride. The renderer checks these values and releases the framebuffer console
-before drawing. The gpio-keys input device is discovered by name; the bottom
-button is Linux `KEY_VOLUMEDOWN` (114). The evdev reader uses the target's
-64-bit Linux event layout.
+The renderer draws packed BGR888 frames into `/dev/fb0`. At boot that is
+SimpleDRM's framebuffer (24 bpp, 1362-byte stride); once `nerves_uevent`
+loads the system's MSM DRM and DSI panel drivers, it is the MSM fbdev
+emulation (usually 32 bpp XRGB8888 with padded rows). The renderer reads the
+geometry from sysfs, converts accordingly, and releases the framebuffer
+console before drawing. The gpio-keys input device is discovered by name; the
+bottom button is Linux `KEY_VOLUMEDOWN` (114). The evdev reader uses the
+target's 64-bit Linux event layout.
 
-Screen off currently means **all-black AMOLED pixels**, not panel power-off or
-system suspend. The current kernel has no native panel driver or brightness
-control. The watch stays running and can be woken with the button, a touch, or
-reached via SSH. True panel power management (a real MIPI DCS sleep/display-off
-command, or a separate backlight/WLED IC if this board has one) requires work
-in the system/kernel repository; a black frame is the lowest-power state
-reachable from userspace alone in the meantime.
+Screen off fades to black and then blanks `/dev/fb0`. With the native panel
+driver, blanking powers the panel and display pipeline down; under SimpleDRM
+it is a no-op and all-black AMOLED pixels are the lowest-power state. Either
+way the watch keeps running and can be woken with the button, a touch, or
+reached via SSH. This requires `nerves_system_tickwatch_pro3` v0.2.0 or later.
 
 The renderer has no additional dependencies. Scenic's current framebuffer driver
 requires Cairo in the Nerves system; this system does not include it. See the

@@ -13,10 +13,9 @@ defmodule HelloWatch.Clock do
   @idle_stream [:battery]
   @sensor_stream [:battery, :heart, {:accel, 25}, {:gyro, 25}]
 
-  # This kernel has no panel/backlight driver (see README), so there is no
-  # brightness to lower - "dimming" means fading the rendered frame toward
-  # true black. On this self-emissive AMOLED that is a real, near-zero-power
-  # state per pixel, unlike an LCD backlight.
+  # Going dark fades the frame to black, then blanks the framebuffer. With the
+  # DSI panel driver, blanking powers the panel and display pipeline down;
+  # under SimpleDRM it does nothing, and the black frame is all there is.
   @idle_timeout :timer.minutes(2)
   @fade_steps 10
   @fade_interval_ms div(:timer.seconds(1), @fade_steps)
@@ -177,6 +176,7 @@ defmodule HelloWatch.Clock do
 
     frame = render_frame(state)
     :ok = state.display.draw(state.fd, Face.fade(frame, 1.0))
+    :ok = state.display.unblank(state.fd)
     Process.send_after(self(), {:fade_step, gen, 1}, @fade_interval_ms)
     %{state | fade_frame: frame}
   end
@@ -184,6 +184,7 @@ defmodule HelloWatch.Clock do
   defp finish_fade(%{fading: :out} = state) do
     if state.idle_timer, do: Process.cancel_timer(state.idle_timer)
     close_sensors(state.sensor_port)
+    :ok = state.display.blank(state.fd)
     %{state | on: false, fading: nil, idle_timer: nil, sensor_port: nil, sensors: %{}}
   end
 
